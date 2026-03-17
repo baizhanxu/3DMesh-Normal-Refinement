@@ -83,5 +83,3 @@ python run_pipeline.py --root_dir "./data/test_cases" --mesh_name "our_method" -
 - `--no_sr`: Flag to **disable** Super Resolution on the AI-generated normal maps.
 - `--use_frequency_separation`: Flag to enable frequency separation. This blends geometry frequencies to construct high-frequency micro-details while preserving the overall clean global shape/macro-silhouette from the original coarse mesh.
 - `--force_subdivide`: Flag to forcefully subdivide the initial mesh. Ensures the mesh reaches a sufficient vertex count (targets >10,000) for high-quality detail displacement if the initial grid is too sparse.
-
-## Output
