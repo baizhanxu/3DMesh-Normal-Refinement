@@ -13,6 +13,7 @@ try:
     from api_gemini_gen_img import process_single_image as gemini_process
     from api_gemini_gen_img import process_sr_image
     from rb_img import process_single_image as rb_process
+    from smooth_mesh import smooth_taubin
 except ImportError as e:
     print(f"Error importing modules: {e}")
     sys.exit(1)
@@ -65,6 +66,8 @@ def main():
     parser.add_argument("--use_frequency_separation", action="store_true", help="Enable frequency separation to preserve global shape", default=True)
     parser.add_argument("--force_subdivide", action="store_true", help="Force subdivide the initial mesh to ensure higher vertex count for sparse meshes", default=False)
     parser.add_argument("--num_views", type=int, choices=[4, 6], default=4, help="Choose whether to use 4 views or 6 views for refinement.")
+    parser.add_argument("--smooth", action="store_true", help="Apply Taubin smoothing after mesh refinement")
+    parser.add_argument("--smooth_iter", type=int, default=10, help="Number of Taubin smoothing iterations")
     args = parser.parse_args()
 
     root_dir = args.root_dir
@@ -75,6 +78,8 @@ def main():
     use_freq_sep = args.use_frequency_separation
     force_subdivide = args.force_subdivide
     num_views = args.num_views
+    apply_smooth = args.smooth
+    smooth_iter = args.smooth_iter
 
     root_path = Path(root_dir)
     if not root_path.exists():
@@ -268,10 +273,25 @@ def main():
             try:
                 subprocess.run(cmd, check=True)
                 print(f"[Success] Refined mesh saved at {refined_obj_path.name}")
+                
+                # 6. 可选去噪步骤
+                if apply_smooth:
+                    smoothed_obj_path = case_dir / f"{mesh_name}_refined_smoothed.obj"
+                    print(f"[Step 6] Option enabled. Applying Taubin smoothing for {smooth_iter} iterations...")
+                    smooth_taubin(str(refined_obj_path), str(smoothed_obj_path), smooth_iter)
+                    
             except subprocess.CalledProcessError as e:
                 print(f"[Error] Failed to refine mesh for {case_dir.name}: {e}")
         else:
             print(f"[Step 5] Skipped. {refined_obj_path.name} already exists.")
+            
+            if apply_smooth:
+                smoothed_obj_path = case_dir / f"{mesh_name}_refined_smoothed.obj"
+                if not smoothed_obj_path.exists():
+                    print(f"[Step 6] Option enabled. Applying Taubin smoothing for {smooth_iter} iterations...")
+                    smooth_taubin(str(refined_obj_path), str(smoothed_obj_path), smooth_iter)
+                else:
+                    print(f"[Step 6] Skipped. Smoothed mesh {smoothed_obj_path.name} already exists.")
 
 if __name__ == "__main__":
     main()
