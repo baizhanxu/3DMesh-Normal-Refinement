@@ -44,74 +44,40 @@ pip install -r requirements.txt --no-build-isolation --no-deps
 
 ## Usage
 
-We provide a Bash script demo `run_demo.sh` for easy execution. You can also run the Python script directly using command-line arguments.
+You can run the Python script directly using command-line arguments to optimize a single mesh.
 
-### 1. Directory Setup
+### 1. Set Gemini API Key
 
-Ensure your mesh files are organized in the following structure:
+Set the `api_url` and `api_key` under `code/api_gemini_gen_img.py` to enable AI-driven normal map enhancement.
 
-```data/
-└── {root_dir}/
-    └──  {category}_{id}/
-         └── {mesh_name}.obj/glb
-```
+### 2. Using Command Line
 
-where:
-
-- `{root_dir}`: Base directory for your mesh cases (e.g., `test_cases`).
-- `{category}`: Object category (e.g., `chair`, `car`).
-- `{id}`: Unique identifier for the mesh case.
-- `{mesh_name}`: Base name of the coarse 3D mesh files which you want to refine without extension.
-
-For example:
-
-```data/
-└── test_cases/
-    └── chair_001/
-         └── our_method.obj
-    └── bottle_001/
-         └── our_method.obj
-```
-
-### 2. Set Gemini API Key
-
-Set the api_url and api_key in [code/api_gemini_gen_img.py](code/api_gemini_gen_img.py) to enable AI-driven normal map enhancement.
-
-### 3. Using the Demo Script
-
-You can run the entire pipeline with a single command using the provided demo script:
+Run the pipeline by providing the necessary arguments to `run_pipeline.py`:
 
 ```bash
-chmod +x run_demo.sh
-./run_demo.sh
-```
+# Default Parallel Multi-view Mode (4 views by default)
+python run_pipeline.py --mesh_path ./data/test_cases/chair_001/concept_mesh.obj --cat chair
 
-you can modify the `run_demo.sh` script to specify different root directories, mesh names.
+# Parallel Mode with 6 views and Style Reference
+python run_pipeline.py --mesh_path ./data/test_cases/car_001/concept_mesh.glb --cat car --num_views 6 --style_ref ./path/to/style_image.jpg
 
-### 4. Using Command Line
-
-Or run the pipeline by providing the necessary arguments to `run_pipeline.py`:
-
-```bash
-# Default Parallel Multi-view Mode
-python run_pipeline.py --root_dir "./data/test_cases" --mesh_name "our_method" --re_remesh
-
-# Autoregressive Mode
-python run_pipeline.py --root_dir "./data/test_cases" --mesh_name "our_method" --autoregressive --n_azimuth 12
+# Autoregressive Mode (progressively generates and optimizes)
+python run_pipeline.py --mesh_path ./data/test_cases/chair_001/concept_mesh.obj --cat chair --autoregressive --n_azimuth 12
 ```
 
 **Available Arguments in `run_pipeline.py`**:
 
-- `--root_dir`: Directory containing your mesh cases (default: `./data/test_cases`).
-- `--mesh_name`: Base name of the 3D mesh files without extension, e.g., `concept_mesh` (looks for `.obj` or `.glb`).
+- `--mesh_path`: **(Required)** Path to the input coarse 3D mesh file (`.obj` or `.glb`).
+- `--out_dir`: Directory to save the outputs. If not provided, it defaults to the directory of the input mesh.
+- `--cat`: Category of the object (e.g., `chair`, `car`, `bottle`). This guides the generative AI to produce appropriate details (default: `object`).
 - `--re_gen`: Flag to force re-generation of AI images and background removal.
 - `--re_remesh`: Flag to force re-execution of the 3D mesh refinement step (`mv_refine.py`).
-- `--no_sr`: Flag to **disable** Super Resolution on the AI-generated normal maps.
-- `--use_frequency_separation`: Flag to enable frequency separation. This blends geometry frequencies to construct high-frequency micro-details while preserving the overall clean global shape/macro-silhouette from the original coarse mesh.
+- `--sr`: Flag to **enable** Super Resolution on the AI-generated normal maps (default is off).
+- `--use_frequency_separation`: Flag to enable frequency separation. This blends geometry frequencies to construct high-frequency micro-details while preserving the overall clean global shape/macro-silhouette from the original coarse mesh (default: `True`).
 - `--force_subdivide`: Flag to forcefully subdivide the initial mesh. Ensures the mesh reaches a sufficient vertex count (targets >10,000) for high-quality detail displacement if the initial grid is too sparse.
-- `--num_views`: Choose whether to use `4` or `6` views for normal generation and mesh refinement (default: `4`).
+- `--num_views`: Choose whether to use `4` or `6` views for normal generation and mesh refinement in parallel mode (default: `4`).
 - `--smooth`: Flag to optionally apply Taubin smoothing directly after the mesh refinement step to denoise the final model while preserving object geometric volume.
 - `--smooth_iter`: Controls the number of iterations for Taubin smoothing (default: `10`). Only active when `--smooth` is provided.
 - `--autoregressive`: Flag to enable Autoregressive processing mode instead of the default Parallel Multi-view mode. Progressively generates and optimizes the mesh view-by-view.
 - `--n_azimuth`: Controls the number of azimuth views used during Autoregressive refinement (default: `12`). Only active when `--autoregressive` is provided.
-- `--style_ref`: Optional path to a style reference image to guide the Gemini inpainting generation in Autoregressive mode.
+- `--style_ref`: Optional path to a style reference image to guide the Gemini generation in both Autoregressive and Parallel modes.
