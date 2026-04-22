@@ -5,7 +5,7 @@ import os
 api_url = "..." # 这里替换成你实际的 Gemini API URL
 api_key = "..." # 这里替换成你实际的 API Key
 
-def process_single_image(input_file, cat="object", num_views=4):
+def process_single_image(input_file, cat="object", num_views=4, style_ref=None):
     if not os.path.exists(input_file):
         print(f"Skipping: {input_file} (Not found)")
         return
@@ -31,12 +31,24 @@ def process_single_image(input_file, cat="object", num_views=4):
             "注意：严格保持法线图中物体各部分的几何形状与轮廓不变，布局与输入的法线图完全一致，生成的图片使用黑色背景，使用最高的分辨率。"
         )
 
+        parts = [
+            {"text": prompt_text},
+            {"inline_data": {"mime_type": "image/png", "data": b64_data}}
+        ]
+        
+        if style_ref and os.path.exists(style_ref):
+            print(f"Using style reference: {style_ref}")
+            with open(style_ref, "rb") as f:
+                style_b64 = base64.b64encode(f.read()).decode()
+            ext_str = "jpeg" if style_ref.lower().endswith("jpg") or style_ref.lower().endswith("jpeg") else "png"
+            parts.extend([
+                {"text": "【风格参考图】: 此外，我提供了一张风格参考图片，请你将这张图片中所展示的物体外观风格提取，并且通过法线图展现出来，应用到生成的法线图中。但需要严格保证物体的形状和轮廓不变。"},
+                {"inline_data": {"mime_type": f"image/{ext_str}", "data": style_b64}}
+            ])
+
         payload = {
             "contents": [{
-                "parts": [
-                    {"text": prompt_text},
-                    {"inline_data": {"mime_type": "image/png", "data": b64_data}}
-                ]
+                "parts": parts
             }]
         }
         # 可以增加一些花纹、条纹或者凹凸作为装饰
