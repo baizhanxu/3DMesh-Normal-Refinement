@@ -9,7 +9,7 @@ curr_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(curr_dir, "code"))
 
 try:
-    from render_init_normals_merge import process_single_mesh
+    from render_init_normals_merge import process_single_mesh, split_image_into_six_views
     from api_gemini_gen_img import process_single_image as gemini_process
     from api_gemini_gen_img import process_sr_image
     from rb_img import process_single_image as rb_process
@@ -64,6 +64,7 @@ def main():
     parser.add_argument("--no_sr", action="store_true", help="Disable super resolution before optimization")
     parser.add_argument("--use_frequency_separation", action="store_true", help="Enable frequency separation to preserve global shape", default=True)
     parser.add_argument("--force_subdivide", action="store_true", help="Force subdivide the initial mesh to ensure higher vertex count for sparse meshes", default=False)
+    parser.add_argument("--num_views", type=int, choices=[4, 6], default=4, help="Choose whether to use 4 views or 6 views for refinement.")
     args = parser.parse_args()
 
     root_dir = args.root_dir
@@ -73,6 +74,7 @@ def main():
     use_sr = not args.no_sr
     use_freq_sep = args.use_frequency_separation
     force_subdivide = args.force_subdivide
+    num_views = args.num_views
 
     root_path = Path(root_dir)
     if not root_path.exists():
@@ -95,11 +97,41 @@ def main():
         print(f"Processing case: {case_dir.name}")
         print(f"==========================================")
 
+        # 0. 对 mesh 进行 subdivide 操作（如果用户指定了 force_subdivide 或者检测到顶点数量过少）
+        import trimesh
+        mesh = trimesh.load(str(obj_path), force='mesh')
+        if isinstance(mesh, trimesh.Scene):
+            mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))
+            
+        original_vertex_count = len(mesh.vertices)
+        target_vertex_count = 10000
+        if force_subdivide:
+            target_vertex_count = max(10000, original_vertex_count * 4)
+
+        subdivided_obj_path = case_dir / f"{mesh_name}_subdivided.obj"
+        
+        if original_vertex_count < target_vertex_count:
+            if not subdivided_obj_path.exists() or re_gen:
+                print(f"[Step 0] Subdividing mesh... Initial vertices: {original_vertex_count}")
+                while len(mesh.vertices) < target_vertex_count:
+                    # 使用 trimesh 的全局细分（1个三角形变4个）
+                    mesh = mesh.subdivide()
+                
+                mesh.export(str(subdivided_obj_path))
+                print(f"[Step 0] Subdivided mesh saved to {subdivided_obj_path.name} with {len(mesh.vertices)} vertices.")
+            else:
+                print(f"[Step 0] Skipped. Subdivided mesh {subdivided_obj_path.name} already exists.")
+            
+            # 更新 obj_path，让后续的渲染和优化都使用这个细分过的模型
+            obj_path = subdivided_obj_path
+        else:
+            print(f"[Step 0] Skipped. Mesh has {original_vertex_count} vertices, which is sufficient.")
+
         # 1. 渲染多视角法线并合并
         merged_normals_path = case_dir / "merged_view_normals.png"
         if not merged_normals_path.exists() or re_gen:
             print(f"[Step 1] Rendering initial multi-view normals for {obj_path.name}...")
-            success = process_single_mesh(str(obj_path), str(case_dir))
+            success = process_single_mesh(str(obj_path), str(case_dir), num_views=num_views)
             if not success:
                 print(f"Failed to render normals for {case_dir.name}")
                 continue
@@ -141,13 +173,16 @@ def main():
             print(f"Background removal failed for {case_dir.name}")
             continue
 
-        # 4. 把合并图拆分为四个 view
-        views_exist = all((case_dir / f"view{i}.png").exists() for i in range(1, 5))
-        view_paths = [str(case_dir / f"view{i}.png") for i in range(1, 5)]
+        # 4. 把合并图拆分为对应数量的 view
+        views_exist = all((case_dir / f"view{i}.png").exists() for i in range(1, num_views + 1))
+        view_paths = [str(case_dir / f"view{i}.png") for i in range(1, num_views + 1)]
         
         if not views_exist or re_gen:
-            print(f"[Step 4] Splitting segmented image into 4 views...")
-            split_image_into_vier_views(str(segmented_path), str(case_dir))
+            print(f"[Step 4] Splitting segmented image into {num_views} views...")
+            if num_views == 6:
+                split_image_into_six_views(str(segmented_path), str(case_dir))
+            else:
+                split_image_into_vier_views(str(segmented_path), str(case_dir))
         else:
             print(f"[Step 4] Skipped. Separated views already exist.")
 
@@ -156,22 +191,35 @@ def main():
         if not refined_obj_path.exists() or re_gen or re_remesh:
             print(f"[Step 5] Running MV Refine to optimize mesh...")
             
-            # 判断类别，如果是圆柱/球体类，则仅使用正背面两个视角 (0和2)
+            # 判断类别，如果是圆柱/球体类，则仅使用特定视角
             cat_name = case_dir.name.split('_')[0]
             two_view_0_2_cats = ["globe", "mug"]
             two_view_1_3_cats = ["bottle", "dispenser", "kettle", "pot", "keyboard"]
 
             if cat_name in two_view_1_3_cats:
-                selected_views = ["1", "3"]
-                selected_img_paths = [view_paths[1], view_paths[3]]
-                print(f"[{cat_name}] is a cylindrical/spherical category, using 2 views (1, 3) instead of 4.")
+                if num_views == 6:
+                    selected_views = ["1", "3", "4", "5"]
+                    selected_img_paths = [view_paths[1], view_paths[3], view_paths[4], view_paths[5]]
+                    print(f"[{cat_name}] is a specific category, using 4 views (1, 3, 4, 5).")
+                else:
+                    selected_views = ["1", "3"]
+                    selected_img_paths = [view_paths[1], view_paths[3]]
+                    print(f"[{cat_name}] is a specific category, using 2 views (1, 3).")
             elif cat_name in two_view_0_2_cats:
-                selected_views = ["0", "2"]
-                selected_img_paths = [view_paths[0], view_paths[2]]
-                print(f"[{cat_name}] is a cylindrical/spherical category, using 2 views (0, 2) instead of 4.")
+                if num_views == 6:
+                    selected_views = ["0", "2", "4", "5"]
+                    selected_img_paths = [view_paths[0], view_paths[2], view_paths[4], view_paths[5]]
+                    print(f"[{cat_name}] is a specific category, using 4 views (0, 2, 4, 5).")
+                else:
+                    selected_views = ["0", "2"]
+                    selected_img_paths = [view_paths[0], view_paths[2]]
+                    print(f"[{cat_name}] is a specific category, using 2 views (0, 2).")
             else:
-                print(f"[{cat_name}] is not a cylindrical/spherical category, using all 4 views for refinement.")
-                selected_views = ["0", "1", "2", "3"]
+                print(f"[{cat_name}] is a general category, using all {num_views} views for refinement.")
+                if num_views == 6:
+                    selected_views = ["0", "1", "2", "3", "4", "5"]
+                else:
+                    selected_views = ["0", "1", "2", "3"]
                 selected_img_paths = view_paths
                 
             if use_sr:

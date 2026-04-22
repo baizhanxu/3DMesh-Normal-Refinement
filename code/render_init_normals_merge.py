@@ -43,7 +43,110 @@ def merge_four_views(base_dir, output_name="merged_view_normals.png"):
     print(f"Merge successful: {output_path}")
     return True
 
-def process_single_mesh(obj_file, output_folder, resolution=2048):
+def merge_six_views(base_dir, output_name="merged_view_normals.png"):
+    view_names = [f"init_normals/{i:02d}.png" for i in range(6)]
+    images = []
+    print(f"Loading from {base_dir} for merge...")
+    for name in view_names:
+        path = os.path.join(base_dir, name)
+        if not os.path.exists(path):
+            print(f"Error: Not found {path}")
+            return False
+        images.append(Image.open(path))
+
+    width, height = images[0].size
+    
+    merged_img = Image.new('RGB', (width * 3, height * 2), (255, 255, 255))
+    
+    positions = [
+        (0, 0),         # view1
+        (width, 0),     # view2
+        (width*2, 0),   # view3
+        (0, height),    # view4
+        (width, height),# view5 (Top)
+        (width*2, height) # view6 (Bottom)
+    ]
+    
+    for img, pos in zip(images, positions):
+        if img.size != (width, height):
+            img = img.resize((width, height), Image.Resampling.LANCZOS)
+        merged_img.paste(img, pos)
+
+    output_path = os.path.join(base_dir, output_name)
+    merged_img.save(output_path)
+    print(f"6-view Merge successful: {output_path}")
+    return True
+
+def split_image_into_six_views(merged_path, save_dir):
+    """
+    Split the 3x2 merged normal map back into 6 views.
+    Handles extra width if image was padded.
+    """
+    import numpy as np
+    img = Image.open(merged_path)
+    
+    # 将模型生成的法线图的红色通道（X轴）反转
+    img_np = np.array(img)
+    if img_np.shape[-1] >= 3:
+        img_np[:, :, 0] = 255 - img_np[:, :, 0]
+    img = Image.fromarray(img_np)
+
+    w, h = img.size
+    
+    # Image might have been padded to square by API. The original shape was 3x2 ratio.
+    # original_w / original_h = 3/2 -> original_h = original_w * 2 / 3
+    if w == h:
+        # It's padded. Assuming padding is at the bottom.
+        actual_h = int(w * 2 / 3)
+        img = img.crop((0, 0, w, actual_h))
+        h = actual_h
+
+    cell_w = w // 3
+    cell_h = h // 2
+    
+    # Actually the script creates 3x2 with size (width*3, height*2)
+    # The cell should be square as it was originally.
+    
+    actual_size = min(cell_w, cell_h)
+    
+    # We arranged them as:
+    # 0, 1, 2
+    # 3, 4, 5
+    # For mv_refine, views from init are 0,1,2,3 (front right back left), 4 (top), 5 (bottom)
+    file_name_mapping = {
+        0: 1, # view1 -> mv view0
+        1: 2, # view2 -> mv view1
+        2: 3, # view3 -> mv view2
+        3: 4, # view4 -> mv view3
+        4: 5, # view5 -> mv view4
+        5: 6  # view6 -> mv view5
+    }
+    
+    views = [
+        (0, 0, actual_size, actual_size),                           # view1
+        (cell_w, 0, cell_w + actual_size, actual_size),             # view2
+        (cell_w * 2, 0, cell_w * 2 + actual_size, actual_size),     # view3
+        (0, cell_h, actual_size, cell_h + actual_size),             # view4
+        (cell_w, cell_h, cell_w + actual_size, cell_h + actual_size), # view5
+        (cell_w * 2, cell_h, cell_w * 2 + actual_size, cell_h + actual_size) # view6
+    ]
+    
+    output_files = []
+    for i, bbox in enumerate(views):
+        view_img = img.crop(bbox)
+        # Crop out the text area if needed to make it square again
+        view_img = view_img.crop((0, 0, actual_size, actual_size))
+        
+        real_id = file_name_mapping[i]
+        out_path = os.path.join(save_dir, f"view{real_id}.png")
+        view_img.save(out_path)
+        output_files.append(out_path)
+    
+    output_files.sort() # Ensure they are sorted view1 -> view6
+    print(f"Split {merged_path} into 6 views in {save_dir}")
+    return output_files
+
+def process_single_mesh(obj_file, output_folder, resolution=2048, num_views=4):
     os.makedirs(output_folder, exist_ok=True)
     ref_vertices, ref_faces = load_obj(str(obj_file))
     ref_vertices = normalize_vertices(ref_vertices)
@@ -51,6 +154,37 @@ def process_single_mesh(obj_file, output_folder, resolution=2048):
 
     distance = 10.0
     mv, proj = make_star_cameras(4, 1, distance=distance)
+
+    def make_view(th, ph, device):
+        th = torch.tensor(th, device=device)
+        ph = torch.tensor(ph, device=device)
+        
+        phi_rot = torch.eye(3, device=device)
+        phi_rot[2,2] = ph.cos()
+        phi_rot[2,0] = -ph.sin()
+        phi_rot[0,2] = ph.sin()
+        phi_rot[0,0] = ph.cos()
+        
+        theta_rot = torch.eye(3, device=device)
+        theta_rot[1,1] = th.cos()
+        theta_rot[1,2] = -th.sin()
+        theta_rot[2,1] = th.sin()
+        theta_rot[2,2] = th.cos()
+        
+        m = torch.eye(4, device=device)
+        m[:3,:3] = theta_rot @ phi_rot
+        
+        # Translation (distance)
+        T = torch.eye(4, device=device)
+        T[2,3] = -distance
+        
+        return T @ m
+
+    if num_views == 6:
+        # 5: Top, 6: Bottom
+        mv_top = make_view(np.pi/2, 0, mv.device).unsqueeze(0)
+        mv_bot = make_view(-np.pi/2, 0, mv.device).unsqueeze(0)
+        mv_6 = torch.cat([mv, mv_top, mv_bot], dim=0)
 
     if 'scissors' in str(obj_file):
         A = 4
@@ -79,7 +213,13 @@ def process_single_mesh(obj_file, output_folder, resolution=2048):
         trans = torch.eye(4, device=device)
         trans[2, 3] = -distance
         mv = trans @ mv
-    
+        
+        if num_views == 6:
+            mv_6 = torch.cat([mv, mv_top, mv_bot], dim=0)
+
+    if num_views == 6:
+        mv = mv_6
+        
     renderer = NormalsRenderer(mv, proj, [resolution, resolution])
     ref_normals = calc_vertex_normals(ref_vertices, ref_faces)
     ref_images = renderer.render(ref_vertices, ref_normals, ref_faces)
@@ -119,6 +259,11 @@ def process_single_mesh(obj_file, output_folder, resolution=2048):
         ref_images_view_nhwc = ref_images_view.permute(0, 2, 3, 1)
         save_images(ref_images_view_nhwc, os.path.join(output_folder, 'init_normals'))
         return merge_four_views(output_folder, output_name="merged_view_normals.png")
+    elif ref_images_view.shape[0] == 6:
+        ref_images_view_nhwc = ref_images_view.permute(0, 2, 3, 1)
+        save_images(ref_images_view_nhwc, os.path.join(output_folder, 'init_normals'))
+        return merge_six_views(output_folder, output_name="merged_view_normals.png")
+
     return False
 
 if __name__ == "__main__":
