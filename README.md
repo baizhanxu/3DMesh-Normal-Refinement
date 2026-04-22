@@ -4,7 +4,12 @@ This repository contains a robust pipeline for enhancing and refining 3D meshes 
 
 ## Overview
 
-The pipeline executes the following automated steps:
+The pipeline supports two primary modes of operation:
+
+- **Parallel Multi-view Mode (Default)**: Renders, generates, and optimizes across 4 or 6 specific views simultaneously.
+- **Autoregressive Mode**: Progressively rotates the object (e.g., across 12 views), rendering the current state, inpainting only newly visible regions using Gemini, and jointly optimizing the mesh geometry step-by-step for higher multi-view consistency.
+
+Depending on the mode, the pipeline executes the following automated steps:
 
 1. **Multi-view Normal Rendering**: Renders the initial coarse 3D mesh into multi-view normal maps (configurable between 4 or 6 views: front, back, left, right, and optionally top, bottom), merged into a single layout.
 2. **AI-Driven Detail Generation**: Uses generative AI (e.g., Gemini) to add rich, photorealistic, and structurally coherent details to the multi-view normal maps based on the object's category.
@@ -88,7 +93,11 @@ you can modify the `run_demo.sh` script to specify different root directories, m
 Or run the pipeline by providing the necessary arguments to `run_pipeline.py`:
 
 ```bash
+# Default Parallel Multi-view Mode
 python run_pipeline.py --root_dir "./data/test_cases" --mesh_name "our_method" --re_remesh
+
+# Autoregressive Mode
+python run_pipeline.py --root_dir "./data/test_cases" --mesh_name "our_method" --autoregressive --n_azimuth 12
 ```
 
 **Available Arguments in `run_pipeline.py`**:
@@ -103,3 +112,6 @@ python run_pipeline.py --root_dir "./data/test_cases" --mesh_name "our_method" -
 - `--num_views`: Choose whether to use `4` or `6` views for normal generation and mesh refinement (default: `4`).
 - `--smooth`: Flag to optionally apply Taubin smoothing directly after the mesh refinement step to denoise the final model while preserving object geometric volume.
 - `--smooth_iter`: Controls the number of iterations for Taubin smoothing (default: `10`). Only active when `--smooth` is provided.
+- `--autoregressive`: Flag to enable Autoregressive processing mode instead of the default Parallel Multi-view mode. Progressively generates and optimizes the mesh view-by-view.
+- `--n_azimuth`: Controls the number of azimuth views used during Autoregressive refinement (default: `12`). Only active when `--autoregressive` is provided.
+- `--style_ref`: Optional path to a style reference image to guide the Gemini inpainting generation in Autoregressive mode.
