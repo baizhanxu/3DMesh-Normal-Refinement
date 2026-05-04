@@ -148,7 +148,7 @@ def get_spherical_cameras(n_views, device, dist=10.0):
     return torch.stack(mvs, dim=0)
 
 device_cam = 'cuda' if torch.cuda.is_available() else 'cpu'
-mv = get_spherical_cameras(n_azimuth, device_cam, distance=distance)
+mv = get_spherical_cameras(n_azimuth, device_cam, dist=distance)
 
 if args.autoreg_mode in ['render', 'context']:
     selected_view_indices = [args.view_idx]
@@ -381,7 +381,7 @@ if args.autoreg_mode == 'render':
         
         # 检查密度，拆分稀疏狂
         # 必须传入形态学清洗后的 mask_cleaned，防止切分时受边缘散碎零星像素的干扰
-        dense_boxes = split_into_dense_bboxes(mask_cleaned > 0, x, y, w, h, min_density=0.4, min_size=50)
+        dense_boxes = split_into_dense_bboxes(mask_cleaned > 0, x, y, w, h, min_density=0.4, min_size=200)
         final_boxes.extend(dense_boxes)
         
     for (bx, by, bw, bh) in final_boxes:
@@ -869,7 +869,7 @@ print(vertices.shape,faces.shape)
 
 # 2. init from coarse mesh
 relax_mask = torch.zeros_like(frozen_mask) # 放弃顶点硬性冻结，改为使用历史视图联合优化的软性软约束！
-opt = AutoregMeshOptimizer(vertices, faces, frozen_mask=relax_mask, ramp=5, edge_len_lims=(0.01, 0.04), local_edgelen=True, laplacian_weight=0.01) # 0.02,  0.005,0.020
+opt = AutoregMeshOptimizer(vertices, faces, frozen_mask=relax_mask, ramp=5, edge_len_lims=(0.001, 0.004), local_edgelen=True, laplacian_weight=0.01) # 0.02,  0.005,0.020
 # opt = MeshOptimizer(vertices, faces)
 
 vertices = opt.vertices

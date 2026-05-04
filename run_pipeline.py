@@ -27,11 +27,11 @@ def split_image_into_vier_views(merged_path, save_dir):
     import numpy as np
     img = Image.open(merged_path)
     
-    # 将模型生成的法线图的红色通道（X轴）反转，以对齐渲染图的 OpenGL/DirectX 标准（解决右红左绿变反的问题）
-    img_np = np.array(img)
-    if img_np.shape[-1] >= 3:
-        img_np[:, :, 0] = 255 - img_np[:, :, 0]
-    img = Image.fromarray(img_np)
+    # # 将模型生成的法线图的红色通道（X轴）反转，以对齐渲染图的 OpenGL/DirectX 标准（解决右红左绿变反的问题）
+    # img_np = np.array(img)
+    # if img_np.shape[-1] >= 3:
+    #     img_np[:, :, 0] = 255 - img_np[:, :, 0]
+    # img = Image.fromarray(img_np)
 
     w, h = img.size
     
@@ -112,24 +112,30 @@ def main():
         target_vertex_count = max(10000, original_vertex_count * 4)
 
     subdivided_obj_path = case_dir / f"{mesh_name}_subdivided.obj"
-    
+       
+
     if original_vertex_count < target_vertex_count:
         if not subdivided_obj_path.exists() or re_gen:
-            print(f"[Step 0] Subdividing mesh... Initial vertices: {original_vertex_count}")
-            while len(mesh.vertices) < target_vertex_count:
-                # 使用 trimesh 的全局细分（1个三角形变4个）
-                mesh = mesh.subdivide()
+            print(f"[Step 0] Remeshing for uniform vertex distribution... Initial vertices: {original_vertex_count}")
+            sdf_resolution = 128
+            sdf_padding_ratio = 0.05
+            print(f"         └─ Using SDF remeshing (resolution={sdf_resolution}, padding_ratio={sdf_padding_ratio})")
+            mesh = remesh_via_sdf(
+                mesh,
+                target_vertex_count=target_vertex_count,
+                sdf_resolution=sdf_resolution,
+                sdf_padding_ratio=sdf_padding_ratio,
+            )
             
             mesh.export(str(subdivided_obj_path))
-            print(f"[Step 0] Subdivided mesh saved to {subdivided_obj_path.name} with {len(mesh.vertices)} vertices.")
+            print(f"[Step 0] Uniformly subdivided mesh saved to {subdivided_obj_path.name} with {len(mesh.vertices)} vertices.")
         else:
             print(f"[Step 0] Skipped. Subdivided mesh {subdivided_obj_path.name} already exists.")
         
         # 更新 obj_path，让后续的渲染和优化都使用这个细分过的模型
         obj_path = subdivided_obj_path
     else:
-        print(f"[Step 0] Skipped. Mesh has {original_vertex_count} vertices, which is sufficient.")
-
+        print(f"[Step 0] Skipped. Mesh has {original_vertex_count} vertices, which is sufficient.")     
     if args.autoregressive:
         # Autoregressive block
         n_views = args.n_azimuth
@@ -144,11 +150,11 @@ def main():
             view_dir = case_dir / f"view_step_{v_idx}"
             view_dir.mkdir(exist_ok=True)
             
-            rendered_normal_path = case_dir / f"rendered_normal_{v_idx}.png"
+            rendered_normal_path = view_dir / f"rendered_normal_{v_idx}.png"
             mask_path = view_dir / "visible_mask.png"
             inpainted_normal_path = view_dir / "inpainted_normal.png"
             segmented_inpainted_path = view_dir / "inpainted_normal_segmented.png"
-            next_mesh_path = case_dir / f"refined_step_{v_idx}.obj"
+            next_mesh_path = view_dir / f"refined_step_{v_idx}.obj"
             
             historical_img_paths.append(str(segmented_inpainted_path))
             historical_views.append(str(v_idx))
@@ -158,7 +164,7 @@ def main():
                 current_mesh_path = next_mesh_path
                 continue
                 
-            coarse_normal_path = case_dir / f"coarse_normal_{v_idx}.png"
+            coarse_normal_path = view_dir / f"coarse_normal_{v_idx}.png"
             if not coarse_normal_path.exists() or re_gen:
                 print("AR-0. Rendering coarse mesh for view as geometric reference...")
                 cmd = [
@@ -168,12 +174,12 @@ def main():
                     "--autoreg_mode", "render",
                     "--view_idx", str(v_idx),
                     "--n_azimuth", str(n_views),
-                    "--out_dir", str(case_dir),
+                    "--out_dir", str(view_dir),
                     "--force_normalize"
                 ]
                 subprocess.run(cmd, check=True)
-                if (case_dir / f"rendered_normal_{v_idx}.png").exists():
-                    os.rename(case_dir / f"rendered_normal_{v_idx}.png", coarse_normal_path)
+                if rendered_normal_path.exists():
+                    os.rename(rendered_normal_path, coarse_normal_path)
             
             print("AR-1. Rendering current mesh and extracting new-part mask...")
             cmd_curr = [
@@ -183,7 +189,7 @@ def main():
                 "--autoreg_mode", "render",
                 "--view_idx", str(v_idx),
                 "--n_azimuth", str(n_views),
-                "--out_dir", str(case_dir),
+                "--out_dir", str(view_dir),
                 "--out_mask_path", str(mask_path)
             ]
             if current_mesh_path == obj_path:
@@ -193,20 +199,29 @@ def main():
             
             print("AR-2. Inpainting new regions using Gemini...")
             from api_gemini_gen_img import process_inpainting_image
-            success = process_inpainting_image(
-                coarse_file=str(coarse_normal_path),
-                mask_file=str(mask_path),
-                output_file=str(inpainted_normal_path),
-                cat=cat_name,
-                style_ref=args.style_ref
-            )
+            
+            success = False
+            max_retries = 3
+            for attempt in range(max_retries):
+                success = process_inpainting_image(
+                    coarse_file=str(coarse_normal_path),
+                    mask_file=str(mask_path),
+                    output_file=str(inpainted_normal_path),
+                    cat=cat_name,
+                    style_ref=args.style_ref
+                )
+                if success:
+                    break
+                print(f"Gemini inpainting failed. Retrying ({attempt + 1}/{max_retries})...")
+                import time
+                time.sleep(2)
             
             # Fallback handling in case of API failure
             if not success:
-                print("Gemini inpainting failed. Falling back to the original render...")
+                print(f"Gemini inpainting failed after {max_retries} attempts. Falling back to the original render...")
                 import shutil
-                if (case_dir / f"rendered_normal_{v_idx}.png").exists():
-                    shutil.copy(str(case_dir / f"rendered_normal_{v_idx}.png"), str(inpainted_normal_path))
+                if rendered_normal_path.exists():
+                    shutil.copy(str(rendered_normal_path), str(inpainted_normal_path))
                 else:
                     shutil.copy(str(coarse_normal_path), str(inpainted_normal_path))
             
@@ -221,10 +236,11 @@ def main():
                 "--autoreg_mode", "optimize",
                 "--view_idx", str(v_idx),
                 "--n_azimuth", str(n_views),
-                "--out_dir", str(case_dir),
+                "--out_dir", str(view_dir),
                 "--output_mesh_path", str(next_mesh_path),
                 "--views", *historical_views,
-                "--img_paths", *historical_img_paths
+                "--img_paths", *historical_img_paths,
+                "--use_frequency_separation"
             ]
             if current_mesh_path == obj_path:
                 cmd_opt.append("--force_normalize")

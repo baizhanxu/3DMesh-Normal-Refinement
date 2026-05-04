@@ -2,9 +2,22 @@ import requests
 import base64
 import os
 
-api_url = "..." # 这里替换成你实际的 Gemini API URL
-api_key = "..." # 这里替换成你实际的 API Key
+api_url = "http://apicz.boyuerichdata.com/v1beta/models/gemini-3-pro-image-preview:generateContent"
+api_key = "sk-eeefxofTRrmeDAat4USfVZE2Ez6uuS1fN95ZY38TisPMsWqm"
 
+# 官网要求：使用 1:1 宽高比，2K 分辨率，以对话方式进行迭代
+aspect_ratio = "1:1"
+resolution = "2K"
+
+def get_generation_config():
+    return {
+        "responseModalities": ["TEXT", "IMAGE"],
+        "imageConfig": {
+            "aspectRatio": aspect_ratio,
+            "imageSize": resolution
+        }
+    }
+    
 def process_single_image(input_file, cat="object", num_views=4, style_ref=None):
     if not os.path.exists(input_file):
         print(f"Skipping: {input_file} (Not found)")
@@ -26,9 +39,9 @@ def process_single_image(input_file, cat="object", num_views=4, style_ref=None):
 
         view_text = "前后左右及上下六个" if num_views == 6 else "前后左右四个"
         prompt_text = (
-            f"我上传的图片为 {cat} 物体{view_text}视角的法线图，请为该法线图添加真实且清晰的几何法线细节，不要添加多余的噪声。"
-            f"我希望在法线图中添加美观的 {cat} 法线细节，可以增加一些花纹、条纹或者凹凸作为装饰。"
-            "注意：严格保持法线图中物体各部分的几何形状与轮廓不变，布局与输入的法线图完全一致，生成的图片使用黑色背景，使用最高的分辨率。"
+            f"我上传的图片为 {cat} 物体{view_text}视角的法线图，请你对该图片进行编辑，要求在保持物体几何形状与轮廓不变的情况下，为该法线图添加符合 {cat} 物体类别的真实、清晰的几何法线细节，不要添加多余的噪声，不要破坏物体原本的形状与轮廓。"
+            f"我希望在法线图中添加美观的 {cat} 法线细节，可以增加一些花纹、条纹或者凹凸作为装饰，请确保多视角之间具有一致性，没有互相矛盾的地方。"
+            "注意：严格保持法线图中物体各部分的几何形状与轮廓不变，布局与输入的法线图完全一致，生成的图片使用黑色背景。"
         )
 
         parts = [
@@ -49,7 +62,8 @@ def process_single_image(input_file, cat="object", num_views=4, style_ref=None):
         payload = {
             "contents": [{
                 "parts": parts
-            }]
+            }],
+            "generationConfig": get_generation_config()
         }
         # 可以增加一些花纹、条纹或者凹凸作为装饰
         try:
@@ -57,7 +71,7 @@ def process_single_image(input_file, cat="object", num_views=4, style_ref=None):
                 api_url,
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json=payload,
-                timeout=120  # increased timeout slightly just in case
+                timeout=300  # increased timeout slightly just in case
             )
             response.raise_for_status() # Raise exception for bad status codes like 500, 502, 504 etc
         except requests.exceptions.Timeout:
@@ -144,7 +158,8 @@ def process_sr_image(input_file):
                 "parts": [
                     {"text": "请提高这张图片的分辨率，保持原本的形状和色彩分布，只做清晰度和超分辨率提升。"},
                     {"inline_data": {"mime_type": f"image/{ext.strip('.')}", "data": b64_data}}
-                ]
+                ],
+                "generationConfig": get_generation_config()
             }]
         }
         
@@ -185,18 +200,6 @@ def process_sr_image(input_file):
         print(f"Failed SR processing {input_file}: {e}")
         return False
 
-# 官网要求：使用 1:1 宽高比，2K 分辨率，以对话方式进行迭代
-aspect_ratio = "1:1"
-resolution = "2K"
-
-def get_generation_config():
-    return {
-        "responseModalities": ["TEXT", "IMAGE"],
-        "imageConfig": {
-            "aspectRatio": aspect_ratio,
-            "imageSize": resolution
-        }
-    }
 
 def process_inpainting_image(coarse_file, mask_file, output_file, cat="object", style_ref=None):
     if not os.path.exists(coarse_file):
@@ -225,7 +228,7 @@ def process_inpainting_image(coarse_file, mask_file, output_file, cat="object", 
         })
         contents.append({
             "role": "model",
-            "parts": [{"text": "我已了解该物体的基本三维法线轮廓形状和结构，接下来的修改将严格保持这部分不变。"}]
+            "parts": [{"text": "我已了解该物体的基本三维法线结构。接下来的修改中，我会在保留主体结构的基础上，允许对局部的几何轮廓和边缘进行小幅度的合理调整和优化，使其更符合真实物体或风格设定。这部分生成的背景必须是纯黑色。"}]
         })
 
         # Round 2 (对话方式迭代第二轮): 传入遮罩进行局部重绘
@@ -240,8 +243,8 @@ def process_inpainting_image(coarse_file, mask_file, output_file, cat="object", 
             # 官网 Prompt 语法
             mask_prompt = (
                 f"Using the provided mask image (where the white boxes represent unseen/missing regions), "
-                f"change only the white masked regions to naturally generated high-frequency 3D normal map details. "
-                f"Keep everything else in the image exactly the same, preserving the original style, lighting, and composition. The background must remain pure black."
+                f"fill the white masked regions with naturally generated 3D normal map details. "
+                f"You are encouraged to slightly refine and adjust the contours and edges in the generated regions (for example, smoothing sharp or unnatural corners) to make the overall shape look more realistic and stylistically coherent. The background must remain pure black."
             )
 
             parts2 = [
@@ -254,7 +257,7 @@ def process_inpainting_image(coarse_file, mask_file, output_file, cat="object", 
                     style_b64 = base64.b64encode(f.read()).decode()
                 ext_str = "jpeg" if style_ref.lower().endswith("jpg") or style_ref.lower().endswith("jpeg") else "png"
                 parts2.extend([
-                    {"text": "【风格参考图】: 此外，我提供了一张风格参考图片，请你将这张图片中所展示的物体外观风格应用到生成的法线图中，但需要严格保证物体的形状和轮廓不变。"},
+                    {"text": "【风格参考图】: 此外，我提供了一张风格参考图片。请你将这张图片中所展示的物体外观风格应用到生成的法线图中。允许小幅度修改物体的轮廓和边缘（例如将生硬的直角变得平滑），使其更贴近参考图片的物理形貌和质感。背景务必保持严格纯黑。"},
                     {"inline_data": {"mime_type": f"image/{ext_str}", "data": style_b64}}
                 ])
                 

@@ -587,7 +587,7 @@ print(vertices.shape,faces.shape)
 # vertices = normalize_vertices(vertices)
 
 # 2. init from coarse mesh
-opt = MeshOptimizer(vertices,faces, ramp=5, edge_len_lims=(0.01, 0.04), local_edgelen=True, laplacian_weight=0.01) # 0.02,  0.005,0.020
+opt = MeshOptimizer(vertices,faces, ramp=5, edge_len_lims=(0.0005, 0.002), local_edgelen=True, laplacian_weight=0.01) # 0.02,  0.005,0.020
 # opt = MeshOptimizer(vertices, faces)
 
 vertices = opt.vertices
@@ -595,25 +595,25 @@ snapshots = []
 
 R_batch = mv[:, :3, :3] # (Num_views, 3, 3) On GPU
 
-# ==== Coarse-to-Fine Strategy Parameters ====
-start_edge_len_lims = (0.01, 0.04)  # 初始化阶段使用较大边长(粗糙)，加速大结构收敛
-end_edge_len_lims = (0.0025, 0.005)   # 结束阶段使用较小边长(精细)，雕刻高频法线细节
+# # ==== Coarse-to-Fine Strategy Parameters ====
+# start_edge_len_lims = (0.01, 0.04)  # 初始化阶段使用较大边长(粗糙)，加速大结构收敛
+# end_edge_len_lims = (0.00025, 0.0005)   # 结束阶段使用较小边长(精细)，雕刻高频法线细节
 
 # remesh before optimization to ensure good initial vertex distribution
 vertices,faces = opt.remesh()
 save_obj(vertices,faces, f'{out_dir}/{name}/remeshed_init.obj')
 
 for i in tqdm(range(steps)):
-    # --- 动态收紧边长限制 (Linear decay) ---
-    progress = i / max(1, steps - 1)
-    current_min = start_edge_len_lims[0] + progress * (end_edge_len_lims[0] - start_edge_len_lims[0])
-    current_max = start_edge_len_lims[1] + progress * (end_edge_len_lims[1] - start_edge_len_lims[1])
+    # # --- 动态收紧边长限制 (Linear decay) ---
+    # progress = i / max(1, steps - 1)
+    # current_min = start_edge_len_lims[0] + progress * (end_edge_len_lims[0] - start_edge_len_lims[0])
+    # current_max = start_edge_len_lims[1] + progress * (end_edge_len_lims[1] - start_edge_len_lims[1])
     
-    opt._edge_len_lims = (current_min, current_max)
-    # 强制将现有顶点的期望边长夹逼到新的范围内
-    if hasattr(opt, '_ref_len') and opt._ref_len is not None:
-        opt._ref_len.clamp_(*opt._edge_len_lims)
-    # ----------------------------------------
+    # opt._edge_len_lims = (current_min, current_max)
+    # # 强制将现有顶点的期望边长夹逼到新的范围内
+    # if hasattr(opt, '_ref_len') and opt._ref_len is not None:
+    #     opt._ref_len.clamp_(*opt._edge_len_lims)
+    # # ----------------------------------------
 
     opt.zero_grad()
     opt._lr *= decay_rate
@@ -670,8 +670,9 @@ for i in tqdm(range(steps)):
     loss_sil = (images[..., -1] - target_images[..., -1]).pow(2).mean()
 
     # 合并 Loss (sil_weight 一般设为 1.0 或 2.0，视情况可微调)
-    sil_weight = 1.0
-    loss = loss_normal + sil_weight * loss_sil
+    sil_weight = 0
+    normal_weight = 1
+    loss = loss_normal * normal_weight + sil_weight * loss_sil
 
     loss.backward()
     
