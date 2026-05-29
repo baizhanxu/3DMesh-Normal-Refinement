@@ -23,7 +23,7 @@ def save_obj(
     filename = Path(filename)
 
     bytes_io = io.BytesIO()
-    np.savetxt(bytes_io, vertices.detach().cpu().numpy(), 'v %.4f %.4f %.4f')
+    np.savetxt(bytes_io, vertices.detach().cpu().numpy(), 'v %.8f %.8f %.8f')
     np.savetxt(bytes_io, faces.cpu().numpy() + 1, 'f %d %d %d') #1-based indexing
 
     obj_path = filename.with_suffix('.obj')

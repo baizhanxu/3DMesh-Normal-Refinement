@@ -1,24 +1,22 @@
 #!/bin/bash
 # Demo script for 3D Mesh Refinement Pipeline
 
-# Ensure we are executing relative to the script directory
+set -e
+
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cd "$SCRIPT_DIR"
 
-# Define variables for the run (modify these as needed)
-DATA_DIR="./test_data"
-MESH_NAME="concept_mesh" 
+MESH_PATH="${1:-./test_data/vase/647ba5cbafc1b3e480dbf73d83f51743.glb}"
+CATEGORY="${2:-bottle}"
 
 echo "=========================================="
 echo "Starting 3D Mesh Refinement Pipeline Demo"
-echo "Data Directory : $DATA_DIR"
-echo "Mesh Name      : $MESH_NAME"
+echo "Mesh Path : $MESH_PATH"
+echo "Category  : $CATEGORY"
 echo "=========================================="
 
-# Run the pipeline with basic arguments
 python run_pipeline.py \
-    --root_dir "$DATA_DIR" \
-    --mesh_name "$MESH_NAME" \
-    --re_remesh \
+    --mesh_path "$MESH_PATH" \
+    --cat "$CATEGORY"
 
 echo "Pipeline execution completed!"

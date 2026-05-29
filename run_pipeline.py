@@ -14,6 +14,7 @@ try:
     from api_gemini_gen_img import process_sr_image
     from rb_img import process_single_image as rb_process
     from smooth_mesh import smooth_taubin
+    from mesh_sanitize import preprocess_mesh
 except ImportError as e:
     print(f"Error importing modules: {e}")
     sys.exit(1)
@@ -65,7 +66,6 @@ def main():
     parser.add_argument("--re_remesh", action="store_true", help="Force re-execution of the mesh refinement step")
     parser.add_argument("--sr", action="store_true", help="Enable super resolution before optimization")
     parser.add_argument("--use_frequency_separation", action="store_true", help="Enable frequency separation to preserve global shape", default=True)
-    parser.add_argument("--force_subdivide", action="store_true", help="Force subdivide the initial mesh to ensure higher vertex count for sparse meshes", default=False)
     parser.add_argument("--num_views", type=int, choices=[4, 6], default=4, help="Choose whether to use 4 views or 6 views for refinement.")
     parser.add_argument("--smooth", action="store_true", help="Apply Taubin smoothing after mesh refinement")
     parser.add_argument("--smooth_iter", type=int, default=10, help="Number of Taubin smoothing iterations")
@@ -90,7 +90,6 @@ def main():
     re_remesh = args.re_remesh
     use_sr = args.sr
     use_freq_sep = args.use_frequency_separation
-    force_subdivide = args.force_subdivide
     num_views = args.num_views
     apply_smooth = args.smooth
     smooth_iter = args.smooth_iter
@@ -100,42 +99,30 @@ def main():
     print(f"Processing mesh: {obj_path.name} in {case_dir}")
     print(f"==========================================")
 
-    # 0. 对 mesh 进行 subdivide 操作（如果用户指定了 force_subdivide 或者检测到顶点数量过少）
-    import trimesh
-    mesh = trimesh.load(str(obj_path), force='mesh')
-    if isinstance(mesh, trimesh.Scene):
-        mesh = trimesh.util.concatenate(tuple(mesh.geometry.values()))
-        
-    original_vertex_count = len(mesh.vertices)
-    target_vertex_count = 10000
-    if force_subdivide:
-        target_vertex_count = max(10000, original_vertex_count * 4)
-
-    subdivided_obj_path = case_dir / f"{mesh_name}_subdivided.obj"
-       
-
-    if original_vertex_count < target_vertex_count:
-        if not subdivided_obj_path.exists() or re_gen:
-            print(f"[Step 0] Remeshing for uniform vertex distribution... Initial vertices: {original_vertex_count}")
-            sdf_resolution = 128
-            sdf_padding_ratio = 0.05
-            print(f"         └─ Using SDF remeshing (resolution={sdf_resolution}, padding_ratio={sdf_padding_ratio})")
-            mesh = remesh_via_sdf(
-                mesh,
-                target_vertex_count=target_vertex_count,
-                sdf_resolution=sdf_resolution,
-                sdf_padding_ratio=sdf_padding_ratio,
-            )
-            
-            mesh.export(str(subdivided_obj_path))
-            print(f"[Step 0] Uniformly subdivided mesh saved to {subdivided_obj_path.name} with {len(mesh.vertices)} vertices.")
-        else:
-            print(f"[Step 0] Skipped. Subdivided mesh {subdivided_obj_path.name} already exists.")
-        
-        # 更新 obj_path，让后续的渲染和优化都使用这个细分过的模型
-        obj_path = subdivided_obj_path
+    preprocessed_obj_path = case_dir / f"{mesh_name}_preprocessed.obj"
+    if not preprocessed_obj_path.exists() or re_gen or re_remesh:
+        print(f"[Step 0] Preprocessing mesh topology and sampling before rendering/refinement...")
+        try:
+            _, preprocess_stats = preprocess_mesh(obj_path, preprocessed_obj_path)
+        except Exception as e:
+            print(f"[Error] Mesh preprocessing failed for {obj_path}: {e}")
+            return
+        print(
+            "[Step 0] Preprocessed mesh saved to "
+            f"{preprocessed_obj_path.name}: "
+            f"V {preprocess_stats['input_vertices']} -> {preprocess_stats['output_vertices']}, "
+            f"F {preprocess_stats['input_faces']} -> {preprocess_stats['output_faces']}, "
+            f"welded {preprocess_stats['welded_vertices']} vertices, "
+            f"removed {preprocess_stats['removed_faces']} faces, "
+            f"subdivision_added V/F "
+            f"{preprocess_stats['added_vertices_by_subdivision']}/"
+            f"{preprocess_stats['added_faces_by_subdivision']}, "
+            f"target_edge={preprocess_stats['target_edge_len']:.3e}"
+        )
     else:
-        print(f"[Step 0] Skipped. Mesh has {original_vertex_count} vertices, which is sufficient.")     
+        print(f"[Step 0] Skipped. Preprocessed mesh {preprocessed_obj_path.name} already exists.")
+    obj_path = preprocessed_obj_path
+
     if args.autoregressive:
         # Autoregressive block
         n_views = args.n_azimuth
@@ -318,8 +305,8 @@ def main():
         if not refined_obj_path.exists() or re_gen or re_remesh:
             print(f"[Step 5] Running MV Refine to optimize mesh...")
             
-            two_view_0_2_cats = ["globe", "mug"]
-            two_view_1_3_cats = ["bottle", "dispenser", "kettle", "pot", "keyboard"]
+            two_view_0_2_cats = ["globe"]
+            two_view_1_3_cats = ["bottle", "mug",  "dispenser", "kettle", "pot", "keyboard"]
 
             if cat_name in two_view_1_3_cats:
                 if num_views == 6:
@@ -387,9 +374,6 @@ def main():
             
             if use_freq_sep:
                 cmd.append("--use_frequency_separation")
-            if force_subdivide:
-                cmd.append("--force_subdivide")
-
             try:
                 subprocess.run(cmd, check=True)
                 print(f"[Success] Refined mesh saved at {refined_obj_path.name}")

@@ -11,14 +11,15 @@ The pipeline supports two primary modes of operation:
 
 Depending on the mode, the pipeline executes the following automated steps:
 
-1. **Multi-view Normal Rendering**: Renders the initial coarse 3D mesh into multi-view normal maps (configurable between 4 or 6 views: front, back, left, right, and optionally top, bottom), merged into a single layout.
-2. **AI-Driven Detail Generation**: Uses generative AI (e.g., Gemini) to add rich, photorealistic, and structurally coherent details to the multi-view normal maps based on the object's category.
-3. **Background Removal & Processing**: Applies background removal and optional Super Resolution (SR) to the generated AI normal maps to ensure clean and high-quality reference signals.
-4. **View Splitting**: Separates the merged layout back into distinct directional views, accommodating the choice of 4 or 6 views.
-5. **Geometry Optimization (`mv_refine.py`)**:
+1. **Mesh Preprocessing**: Conservatively cleans the input mesh, welds duplicated seam vertices, removes invalid faces, and subdivides large/long-edge faces when the mesh is too sparse for geometry optimization.
+2. **Multi-view Normal Rendering**: Renders the preprocessed coarse 3D mesh into multi-view normal maps (configurable between 4 or 6 views: front, back, left, right, and optionally top, bottom), merged into a single layout.
+3. **AI-Driven Detail Generation**: Uses generative AI (e.g., Gemini) to add rich, photorealistic, and structurally coherent details to the multi-view normal maps based on the object's category.
+4. **Background Removal & Processing**: Applies background removal and optional Super Resolution (SR) to the generated AI normal maps to ensure clean and high-quality reference signals.
+5. **View Splitting**: Separates the merged layout back into distinct directional views, accommodating the choice of 4 or 6 views.
+6. **Geometry Optimization (`mv_refine.py`)**:
    - Optimizes the 3D mesh geometry to align with the AI-generated normal maps via differentiable rendering.
    - Utilizes **Frequency Separation** to balance between injecting high-frequency micro-details and allowing macro-contour/silhouette deformations.
-6. **Post-Processing Smoothing**: Optionally applies filtering techniques like Taubin smoothing (via `smooth_mesh.py`) to reduce generated surface noise while retaining structural volume.
+7. **Post-Processing Smoothing**: Optionally applies filtering techniques like Taubin smoothing (via `smooth_mesh.py`) to reduce generated surface noise while retaining structural volume.
 
 ## Environment Setup
 
@@ -36,6 +37,7 @@ pip install -r requirements.txt --no-build-isolation --no-deps
 ## Directory Structure
 
 - `run_pipeline.py`: The main controller script that orchestrates the entire workflow.
+- `code/mesh_sanitize.py`: Conservative mesh preprocessing utilities used before rendering/refinement.
 - `code/mv_refine.py`: The core PyTorch-based 3D multi-view geometry optimization engine.
 - `code/render_init_normals_merge.py`: Script for rendering initial multi-view normals.
 - `code/api_gemini_gen_img.py`: Interface for generating enhanced normal maps using the Gemini API.
@@ -48,7 +50,7 @@ You can run the Python script directly using command-line arguments to optimize 
 
 ### 1. Set Gemini API Key
 
-Set the `api_url` and `api_key` under `code/api_gemini_gen_img.py` to enable AI-driven normal map enhancement.
+Set `GEMINI_API_KEY` in your environment to enable AI-driven normal map enhancement. Optionally set `GEMINI_API_URL` to override the default endpoint.
 
 ### 2. Using Command Line
 
@@ -74,7 +76,6 @@ python run_pipeline.py --mesh_path ./data/test_cases/chair_001/concept_mesh.obj 
 - `--re_remesh`: Flag to force re-execution of the 3D mesh refinement step (`mv_refine.py`).
 - `--sr`: Flag to **enable** Super Resolution on the AI-generated normal maps (default is off).
 - `--use_frequency_separation`: Flag to enable frequency separation. This blends geometry frequencies to construct high-frequency micro-details while preserving the overall clean global shape/macro-silhouette from the original coarse mesh (default: `True`).
-- `--force_subdivide`: Flag to forcefully subdivide the initial mesh. Ensures the mesh reaches a sufficient vertex count (targets >10,000) for high-quality detail displacement if the initial grid is too sparse.
 - `--num_views`: Choose whether to use `4` or `6` views for normal generation and mesh refinement in parallel mode (default: `4`).
 - `--smooth`: Flag to optionally apply Taubin smoothing directly after the mesh refinement step to denoise the final model while preserving object geometric volume.
 - `--smooth_iter`: Controls the number of iterations for Taubin smoothing (default: `10`). Only active when `--smooth` is provided.

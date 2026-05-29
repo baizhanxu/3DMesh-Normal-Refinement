@@ -2,8 +2,13 @@ import requests
 import base64
 import os
 
-api_url = "http://apicz.boyuerichdata.com/v1beta/models/gemini-3-pro-image-preview:generateContent"
-api_key = "sk-eeefxofTRrmeDAat4USfVZE2Ez6uuS1fN95ZY38TisPMsWqm"
+api_url = os.environ.get("GEMINI_API_URL", "http://apicz.boyuerichdata.com/v1beta/models/gemini-3-pro-image-preview:generateContent")
+api_key = os.environ.get("GEMINI_API_KEY")
+
+def get_auth_headers():
+    if not api_key:
+        raise RuntimeError("GEMINI_API_KEY is not set. Export it before running generation steps.")
+    return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
 # 官网要求：使用 1:1 宽高比，2K 分辨率，以对话方式进行迭代
 aspect_ratio = "1:1"
@@ -41,6 +46,7 @@ def process_single_image(input_file, cat="object", num_views=4, style_ref=None):
         prompt_text = (
             f"我上传的图片为 {cat} 物体{view_text}视角的法线图，请你对该图片进行编辑，要求在保持物体几何形状与轮廓不变的情况下，为该法线图添加符合 {cat} 物体类别的真实、清晰的几何法线细节，不要添加多余的噪声，不要破坏物体原本的形状与轮廓。"
             f"我希望在法线图中添加美观的 {cat} 法线细节，可以增加一些花纹、条纹或者凹凸作为装饰，请确保多视角之间具有一致性，没有互相矛盾的地方。"
+            # f"我希望在法线图中添加美观的欧式水杯法线细节，杯身上雕刻有清晰的玫瑰花图案作为装饰，请确保多视角之间具有一致性，没有互相矛盾的地方。"
             "注意：严格保持法线图中物体各部分的几何形状与轮廓不变，布局与输入的法线图完全一致，生成的图片使用黑色背景。"
         )
 
@@ -69,7 +75,7 @@ def process_single_image(input_file, cat="object", num_views=4, style_ref=None):
         try:
             response = requests.post(
                 api_url,
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                headers=get_auth_headers(),
                 json=payload,
                 timeout=300  # increased timeout slightly just in case
             )
@@ -166,7 +172,7 @@ def process_sr_image(input_file):
         try:
             response = requests.post(
                 sr_api_url,
-                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                headers=get_auth_headers(),
                 json=payload,
                 timeout=120
             )
@@ -174,7 +180,7 @@ def process_sr_image(input_file):
             if response.status_code == 404:
                 response = requests.post(
                     api_url,
-                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    headers=get_auth_headers(),
                     json=payload,
                     timeout=120
                 )
@@ -273,7 +279,7 @@ def process_inpainting_image(coarse_file, mask_file, output_file, cat="object", 
         
         response = requests.post(
             api_url,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+            headers=get_auth_headers(),
             json=payload,
             timeout=180
         )
